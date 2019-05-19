@@ -2,16 +2,50 @@ Kubernetes The Hard Way - Proxmox LXC-based Cluster
 ===================================================
 
 [This document](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/blob/master/README.md)
-aims at providing a full hands-on guide to set up a Kubernets
-cluster on [Proxmox-based](https://www.proxmox.com/en/proxmox-ve/features)
+aims at providing a full hands-on guide to set up a
+[Kubernetes (aka K8S)](https://kubernetes.io/) cluster on
+[Proxmox-based](https://www.proxmox.com/en/proxmox-ve/features)
 [LXC containers](https://linuxcontainers.org/#LXC).
 Using [LXD](https://linuxcontainers.org/#LXD) rather than Proxmox should
 not make much difference.
-Contributions are welcome to complemenent that guide.
 
-All the nodes are setup with CentOS distributions, and insulated thanks to
-a gateway. Hence, all the traffic from outside the cluster is channelled
-through the gateway.
+It is an adaptation of the excellent
+["Kubernetes The Hard Way - Bare Metal"
+guide](https://github.com/Praqma/LearnKubernetes/blob/master/kamran/Kubernetes-The-Hard-Way-on-BareMetal.md),
+itself derived from the famous
+["Kubernetes The Har Way"
+guide](https://github.com/kelseyhightower/kubernetes-the-hard-way),
+by [Kelsey Hightower](https://github.com/kelseyhightower).
+
+The "Bare Metal" version of the "Kubernetes The Hard Way" guide explains
+how to install a Kubernetes cluster on Vagrant/`libvirt`-based
+[KVM](https://en.wikipedia.org/wiki/Kernel-based_Virtual_Machine)/[QEMU](https://en.wikipedia.org/wiki/QEMU)
+virtual machines (VM), and begins to show its age. At the time of writing
+(May 2019), most of the details are outdated.
+
+This guide also makes use of the
+["Run kubernetes inside LXC container"
+article](https://medium.com/@kvaps/run-kubernetes-in-lxc-container-f04aa94b6c9c),
+for the adaptation from KVM/QEMU virtual machines (VM) to LXC containers.
+Basically, a few more options have to be set up on the (Proxmox) host
+to that the (LXC) containers may run Docker inside.
+
+Overall, this guide is therefore both an update for the
+"Kubernetes The Hard Way" guides and an adpation for light-weight
+containers (rather than full virtual machines (VM)).
+
+All the nodes are setup with [CentOS distributions](https://www.centos.org),
+and insulated thanks to a gateway: all the traffic from outside
+the cluster is channelled through the gateway. The set up of such
+a gateway is also an addition to this guide. It allows
+one to experiment with Kubernetes clusters, including operating some
+in production-like settings, while keeping some good level of security.
+
+As many other documentations, that one will soon be outdated, and imperfect
+for sure. Contributions are therefore welcome to complemenent that guide.
+For instance, through
+[issues](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/issues) or
+[pull requests](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/pulls).
 
 # References
 * [Kubernetes The Hard Way - Bare Metal](https://github.com/Praqma/LearnKubernetes/blob/master/kamran/Kubernetes-The-Hard-Way-on-BareMetal.md),
@@ -27,19 +61,27 @@ through the gateway.
 * [Getting started guide on installing a multi-node Kubernetes cluster
   on Fedora with flannel](https://kubernetes.io/docs/getting-started-guides/fedora/flannel_multi_node_cluster/)
 
+* [![Kubernetes - Architecture](img/Kubernetes - Architecture.png)],
+by [Khtan66 - Own work, CC BY-SA 4.0](https://commons.wikimedia.org/w/index.php?curid=53571935)
+* [![Kubernetes - Pod Networking](img/Kubernetes - Pod Networking.png)],
+by [Marvin The Paranoid - Own work, CC BY-SA 4.0](https://commons.wikimedia.org/w/index.php?curid=75140812)
+
 # Host preparation
-In that section, it is assumed that we are logged on the Proxmox host as `root`.
+In that section, it is assumed that we are logged on the Proxmox host
+as `root`.
 
 Though it is not strictly necessary, the cluster may be accessible from
 outside (from the Internet).
 
 The following parameters are used in the remaining of the guide, and may be
 adapted according to your configuration:
-+ IP of the routing gateway on the host (typically ends with `.254`: `HST_GTW_IP`
-+ (Potentially virtual) MAC address of the Kubernetes cluster gateway: `GTW_MAC`
-+ IP address of the Kubernetes cluster gateway: `GTW_IP`
-+ VM ID of the Kubernetes cluster gateway: `103`
-+ The private IP addresses and host names of all the nodes correspond
+* IP of the routing gateway on the host (typically ends with `.254`:
+  `HST_GTW_IP`
+* (Potentially virtual) MAC address of the Kubernetes cluster gateway:
+  `GTW_MAC`
+* IP address of the Kubernetes cluster gateway: `GTW_IP`
+* VM ID of the Kubernetes cluster gateway: `103`
+* The private IP addresses and host names of all the nodes correspond
   to
   [Tobias' guide](https://github.com/Praqma/LearnKubernetes/blob/master/kamran/Kubernetes-The-Hard-Way-on-BareMetal.md#provision-vms-in-kvm),
   and a summary is provided below
@@ -60,7 +102,7 @@ adapted according to your configuration:
 
 * Extract of the host network configuration:
 ```bash
-$ cat /etc/network/interfaces
+root@proxmox:~$ cat /etc/network/interfaces
 # This file describes the network interfaces available on your system
 # and how to activate them. For more information, see interfaces(5).
 
@@ -100,7 +142,7 @@ iface vmbr3 inet static
         post-up echo 1 > /proc/sys/net/ipv4/ip_forward
         post-up iptables -t nat -A POSTROUTING -s '10.240.0.0/24' -o vmbr0 -j MASQUERADE
         post-down iptables -t nat -D POSTROUTING -s '10.240.0.0/24' -o vmbr0 -j MASQUERADE
-$ cat /etc/systemd/network/50-default.network
+root@proxmox:~$ cat /etc/systemd/network/50-default.network
 # This file sets the IP configuration of the primary (public) network device.
 # You can also see this as "OSI Layer 3" config.
 # It was created by the OVH installer, please be careful with modifications.
@@ -125,7 +167,7 @@ Address=${HST_IPv6}
 [Route]
 Destination=2001:0000:0000:34ff:ff:ff:ff:ff
 Scope=link
-$ cat /etc/systemd/network/50-public-interface.link
+root@proxmox:~$ cat /etc/systemd/network/50-public-interface.link
 # This file configures the relation between network device and device name.
 # You can also see this as "OSI Layer 2" config.
 # It was created by the OVH installer, please be careful with modifications.
@@ -148,30 +190,47 @@ NamePolicy=kernel database onboard slot path mac
   (change the date and time-stamp according to the time you download that
   template):
 ```bash
-$ wget https://us.images.linuxcontainers.org/images/centos/7/amd64/default/20190510_07:08/rootfs.tar.xz -O /vz/template/cache/centos-7-default_20190510_amd64.tar.xz
+root@proxmox:~$ wget https://us.images.linuxcontainers.org/images/centos/7/amd64/default/20190510_07:08/rootfs.tar.xz -O /vz/template/cache/centos-7-default_20190510_amd64.tar.xz
 ```
 
-## Kubernetes cluster gateway
-* Create the LXC template for the Kubernetes cluster gateway:
+## Overlay module
 ```bash
-$ pct create 103 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname gwkublxc.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr0,firewall=1,gw=${HST_GTW_IP},hwaddr=${GTW_MAC},ip=${GTW_IP}/32,type=veth --net1 name=eth1,bridge=vmbr3,ip=10.240.0.103/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ modprobe overlay && \
+ cat > /etc/modules-load.d/docker-overlay.conf << _EOF
+overlay
+_EOF
 ```
 
-* Enter the gateway and complement the installation
-  (for security reason, it may be a good idea to change the SSH port
-  from `22` to, say `7022`):
+# Kubernetes cluster gateway
+* Create the LXC container for the Kubernetes cluster gateway:
 ```bash
-$ pct start 103
-$ pct enter 103
-# yum -y update
-# yum -y install openssh-server man-db file rsync openssl wget curl less htop yum-utils net-tools
-# sed -ie 's/#Port 22/Port 7022/g' /etc/ssh/sshd_config
-# systemctl restart sshd && systemctl enable sshd
+root@proxmox:~$ pct create 103 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname gwkublxc.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr0,firewall=1,gw=${HST_GTW_IP},hwaddr=${GTW_MAC},ip=${GTW_IP}/32,type=veth --net1 name=eth1,bridge=vmbr3,ip=10.240.0.103/24,type=veth --onboot 1 --ostype centos
+```
+
+* Start and enter the gateway:
+```bash
+root@proxmox:~$ pct start 103
+root@proxmox:~$ pct enter 103
+root@gwkublxc:~#
+```
+
+## Complement the installation on the gateway
+* For security reason, it may be a good idea to change the SSH port
+  from `22` to, say `7022`:
+```bash
+root@gwkublxc:~# yum -y update
+root@gwkublxc:~# yum -y install openssh-server man-db file rsync openssl \
+ wget curl less htop yum-utils net-tools
+root@gwkublxc:~# sed -ie 's/#Port 22/Port 7022/g' /etc/ssh/sshd_config
+root@gwkublxc:~# systemctl restart sshd && systemctl enable sshd
 ```
 
 * Settings:
 ```bash
-$ cat >> /etc/hosts << _EOF
+root@gwkublxc:~# cat > /etc/hosts << _EOF
+# Local VM
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
 
 # Kubernetes on LXC
 10.240.0.11     etcd1.example.com       etcd1
@@ -186,7 +245,7 @@ $ cat >> /etc/hosts << _EOF
 10.240.0.42     lb2.example.com         lb2
 
 _EOF
-$ cat >> ~/.bashrc << _EOF
+root@gwkublxc:~# cat >> ~/.bashrc << _EOF
 
 # Kubernetes
 export KUBERNETES_PUBLIC_IP_ADDRESS="10.240.0.20"
@@ -198,7 +257,7 @@ then
 fi
 
 _EOF
-$ cat ~/.bash_alises << _EOF
+root@gwkublxc:~$ cat ~/.bash_alises << _EOF
 # User specific aliases and functions
 alias dir='ls -laFh --color'
 alias rm='rm -i'
@@ -206,24 +265,25 @@ alias cp='cp -i'
 alias mv='mv -i'
 
 _EOF
-$ . ~/.bashrc
+root@gwkublxc:~# . ~/.bashrc
 ```
 
-## CFSSL
-* CFSSL software:
+# CFSSL
+
+## CFSSL software
 ```bash
-$ mkdir -p /opt/cfssl
-$ wget https://pkg.cfssl.org/R1.2/cfssl_linux-amd64 -O /opt/cfssl/cfssl_linux-amd64
-$ wget https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64 -O /opt/cfssl/cfssljson_linux-amd64
-$ chmod +x /opt/cfssl/cfssl_linux-amd64 /opt/cfssl/cfssljson_linux-amd64
-$ install /opt/cfssl/cfssl_linux-amd64 /usr/local/bin/cfssl
-$ install /opt/cfssl/cfssljson_linux-amd64 /usr/local/bin/cfssljson
+root@gwkublxc:~# mkdir -p /opt/cfssl
+root@gwkublxc:~# wget https://pkg.cfssl.org/R1.2/cfssl_linux-amd64 -O /opt/cfssl/cfssl_linux-amd64
+root@gwkublxc:~# wget https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64 -O /opt/cfssl/cfssljson_linux-amd64
+root@gwkublxc:~# chmod +x /opt/cfssl/cfssl_linux-amd64 /opt/cfssl/cfssljson_linux-amd64
+root@gwkublxc:~# install /opt/cfssl/cfssl_linux-amd64 /usr/local/bin/cfssl
+root@gwkublxc:~# install /opt/cfssl/cfssljson_linux-amd64 /usr/local/bin/cfssljson
 ```
 
-* CA certificates:
+## CA certificates
 ```bash
-$ mkdir -p /opt/cfssl/etc && cd /opt/cfssl/etc
-$ cat > /opt/cfssl/etc/ca-config.json << _EOF
+root@gwkublxc:~# mkdir -p /opt/cfssl/etc && cd /opt/cfssl/etc
+root@gwkublxc:~# cat > /opt/cfssl/etc/ca-config.json << _EOF
 {
   "signing": {
     "default": {
@@ -238,7 +298,10 @@ $ cat > /opt/cfssl/etc/ca-config.json << _EOF
   }
 }
 _EOF
-cat > /opt/cfssl/etc/ca-csr.json << _EOF
+```
+
+```bash
+root@gwkublxc:~# cat > /opt/cfssl/etc/ca-csr.json << _EOF
 {
   "CN": "Kubernetes",
   "key": {
@@ -256,14 +319,18 @@ cat > /opt/cfssl/etc/ca-csr.json << _EOF
   ]
 }
 _EOF
-$ cfssl gencert -initca /opt/cfssl/etc/ca-csr.json | cfssljson -bare ca
+```
+
+```bash
+root@gwkublxc:~# cfssl gencert -initca /opt/cfssl/etc/ca-csr.json | \
+ cfssljson -bare ca
 2019/05/11 14:39:26 [INFO] generating a new CA key and certificate from CSR
 2019/05/11 14:39:26 [INFO] generate received request
 2019/05/11 14:39:26 [INFO] received CSR
 2019/05/11 14:39:26 [INFO] generating key: rsa-2048
 2019/05/11 14:39:26 [INFO] encoded CSR
 2019/05/11 14:39:26 [INFO] signed certificate with serial number 53..53
-$ openssl x509 -in /opt/cfssl/etc/ca.pem -text -noout
+root@gwkublxc:~# openssl x509 -in /opt/cfssl/etc/ca.pem -text -noout
 Certificate:
     Data:
         Version: 3 (0x2)
@@ -299,9 +366,9 @@ Certificate:
          37:93:6e:fd
 ```
 
-* Node certificates:
+## Node certificates
 ```bash
-$ cat > /opt/cfssl/etc/kubernetes-csr.json <<EOF
+root@gwkublxc:~# cat > /opt/cfssl/etc/kubernetes-csr.json << _EOF
 {
   "CN": "*.example.com",
   "hosts": [
@@ -363,8 +430,11 @@ $ cat > /opt/cfssl/etc/kubernetes-csr.json <<EOF
     }
   ]
 }
-EOF
-$ cfssl gencert \
+_EOF
+```
+
+```bash
+root@gwkublxc:~# cfssl gencert \
   -ca=/opt/cfssl/etc/ca.pem \
   -ca-key=/opt/cfssl/etc/ca-key.pem \
   -config=/opt/cfssl/etc/ca-config.json \
@@ -379,7 +449,7 @@ $ cfssl gencert \
 websites. For more information see the Baseline Requirements for the Issuance and Management
 of Publicly-Trusted Certificates, v.1.1.6, from the CA/Browser Forum (https://cabforum.org);
 specifically, section 10.2.3 ("Information Requirements").
-$ openssl x509 -in /opt/cfssl/etc/kubernetes.pem -text -noout
+root@gwkublxc:~# openssl x509 -in /opt/cfssl/etc/kubernetes.pem -text -noout
 Certificate:
     Data:
         Version: 3 (0x2)
@@ -419,82 +489,90 @@ Certificate:
          ae:84:75:d7
 ```
 
-# `etcd`
+# Creation and basic setup of the LXC containers
+
+* Back to the (Proxmox) host:
+```bash
+root@gwkublxc:~# exit
+root@proxmox:~$
+```
+
+## Configuration management servers
 * `etcd1`:
 ```bash
-$ pct create 211 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname etcd1.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.11/24,type=veth --onboot 1 --ostype centos
-$ pct resize 211 rootfs 10G
-$ pce enter 211
-# yum -y install net-tools openssh-server
-# systemctl start sshd && systemctl enable sshd
-# exit
+root@proxmox:~$ pct create 211 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname etcd1.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.11/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 211 rootfs 10G
+root@proxmox:~$ pce enter 211
+root@etcd1:~# yum -y install net-tools openssh-server
+root@etcd1:~# systemctl start sshd && systemctl enable sshd
+root@etcd1:~# exit
 ```
 
 * `etcd2`:
 ```bash
-$ pct create 212 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname etcd2.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.12/24,type=veth --onboot 1 --ostype centos
-$ pct resize 212 rootfs 10G
-$ pce enter 212
-# yum -y install net-tools openssh-server
-# systemctl start sshd && systemctl enable sshd
-# exit
+root@proxmox:~$ pct create 212 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname etcd2.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.12/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 212 rootfs 10G
+root@proxmox:~$ pce enter 212
+root@etcd2:~# yum -y install net-tools openssh-server
+root@etcd2:~# systemctl start sshd && systemctl enable sshd
+root@etcd2:~# exit
 ```
 
-### `controller`
+## Controller plane servers
 * `controller`:
 ```bash
-$ pct create 220 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 2 --hostname controller.example.com --memory 2048 --swap 4096 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.20/24,type=veth --onboot 1 --ostype centos
-$ pct resize 220 rootfs 10G
+root@proxmox:~$ pct create 220 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 2 --hostname controller.example.com --memory 2048 --swap 4096 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.20/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 220 rootfs 10G
 ```
 
 * `controller1`:
 ```bash
-$ pct create 221 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 2 --hostname controller1.example.com --memory 2048 --swap 4096 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.21/24,type=veth --onboot 1 --ostype centos
-$ pct resize 221 rootfs 10G
+root@proxmox:~$ pct create 221 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 2 --hostname controller1.example.com --memory 2048 --swap 4096 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.21/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 221 rootfs 10G
 ```
 
 * `controller2`:
 ```bash
-$ pct create 222 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 2 --hostname controller2.example.com --memory 2048 --swap 4096 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.22/24,type=veth --onboot 1 --ostype centos
-$ pct resize 222 rootfs 10G
+root@proxmox:~$ pct create 222 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 2 --hostname controller2.example.com --memory 2048 --swap 4096 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.22/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 222 rootfs 10G
 ```
 
-# `worker`
+## Worker nodes
 * `worker1`:
 ```bash
-$ pct create 231 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 8 --hostname worker1.example.com --memory 16384 --swap 16384 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.31/24,type=veth --onboot 1 --ostype centos
-$ pct resize 231 rootfs 20G
+root@proxmox:~$ pct create 231 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 8 --hostname worker1.example.com --memory 16384 --swap 16384 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.31/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 231 rootfs 20G
 ```
 
 * `worker2`:
 ```bash
-$ pct create 232 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 8 --hostname worker2.example.com --memory 16384 --swap 16384 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.32/24,type=veth --onboot 1 --ostype centos
-$ pct resize 232 rootfs 20G
+root@proxmox:~$ pct create 232 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 8 --hostname worker2.example.com --memory 16384 --swap 16384 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.32/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ pct resize 232 rootfs 20G
 ```
 
-# `lb`
+## Load balancers (lb)
 * `lb`:
 ```bash
-$ pct create 240 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname lb.example.com --memory 512 --swap 1024 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.40/24,type=veth --onboot 1 --ostype centos
-$ # pct resize 240 rootfs 4G
+root@proxmox:~$ pct create 240 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname lb.example.com --memory 512 --swap 1024 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.40/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ # pct resize 240 rootfs 4G
 ```
 
 * `lb1`:
 ```bash
-$ pct create 241 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname lb1.example.com --memory 512 --swap 1024 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.41/24,type=veth --onboot 1 --ostype centos
-$ # pct resize 241 rootfs 4G
+root@proxmox:~$ pct create 241 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname lb1.example.com --memory 512 --swap 1024 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.41/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ # pct resize 241 rootfs 4G
 ```
 
 * `lb2`:
 ```bash
-$ pct create 242 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname lb2.example.com --memory 512 --swap 1024 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.42/24,type=veth --onboot 1 --ostype centos
-$ # pct resize 242 rootfs 4G
+root@proxmox:~$ pct create 242 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname lb2.example.com --memory 512 --swap 1024 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.42/24,type=veth --onboot 1 --ostype centos
+root@proxmox:~$ # pct resize 242 rootfs 4G
 ```
 
-# On the clients
+## On the clients (eg, laptops)
 * SSH configuration:
 ```bash
-$ cat >> ~/.ssh/config << _EOF
+user@laptop$ cat >> ~/.ssh/config << _EOF
 
 # Kubernetes cluster on Proxmox/LXC
 Host gw.kublxc
@@ -536,15 +614,18 @@ _EOF
 
 * Upload the SSH keys onto the K8S gateway:
 ```bash
-$ rsync -av your-ssh-keys root@gw.kublxc:~/.ssh/
+user@laptop$ rsync -av your-ssh-keys root@gw.kublxc:~/.ssh/
 ```
 
+## Propagation of certificates on the newly created LXC containers
 * Push the certificates to every K8S node:
 ```bash
-$ chmod 644 /opt/cfssl/etc/kubernetes-key.pem
-$ declare -a node_list=("lb" "lb1" "lb2" "etcd1" "etcd2" "controller" "controller1" "controller2" "worker1" "worker2")
-$ declare -a cert_list=("/opt/cfssl/etc/ca.pem" "/opt/cfssl/etc/kubernetes-key.pem" "/opt/cfssl/etc/kubernetes.pem")
-$ for node in "${node_list[@]}"
+root@gwkublxc:~# chmod 644 /opt/cfssl/etc/kubernetes-key.pem
+root@gwkublxc:~# declare -a node_list=("lb" "lb1" "lb2" "etcd1" "etcd2" \
+ "controller" "controller1" "controller2" "worker1" "worker2")
+root@gwkublxc:~# declare -a cert_list=("/opt/cfssl/etc/ca.pem" \
+ "/opt/cfssl/etc/kubernetes-key.pem" "/opt/cfssl/etc/kubernetes.pem")
+root@gwkublxc:~# for node in "${node_list[@]}"
 do
   for cert in "${cert_list[@]}"
   do
@@ -553,41 +634,51 @@ do
 done
 ```
 
-# Kubernetes - Supplementary configuration
-* General:
+## Supplementary configuration of the LXC containers
+* The following sub-sections have to be performed not only on the gateway,
+  but also on every LXC container composing the Kubernetes cluster.
+  Those steps cannot be easily automated, as SSH is not yet setup
+  on those containers.
+
+### General
 ```bash
-$ yum -y update && \
+root@container:~# yum -y update && \
  yum -y install epel-release && \
- yum -y install rpmconf yum-utils htop wget less net-tools whois bzip2 rsync \
-   bash-completion bash-completion-extras openssh-server ntp
-$ rpmconf -a
-$ ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime && \
+ yum -y install rpmconf yum-utils htop wget curl file less net-tools whois \
+  bzip2 rsync bash-completion bash-completion-extras openssh-server ntp
+root@container:~# rpmconf -a
+root@container:~# ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime && \
  systemctl start ntpd && systemctl enable ntpd && \
  setenforce 0 && \
- sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+ sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/g' \
+  /etc/sysconfig/selinux
 ```
 
-* SSH:
+### SSH
 ```bash
-$ mkdir ~/.ssh && chmod 700 ~/.ssh && \
+root@container:~# mkdir ~/.ssh && chmod 700 ~/.ssh && \
  cat >> ~/.ssh/authorized_keys << _EOF
-ssh-rsa AAAZZZ k8s@example.com
+ssh-rsa AAAxxxZZZ k8s@example.com
 _EOF
-$ chmod 600 ~/.ssh/authorized_keys
-$ systemctl start sshd.service && systemctl enable sshd.service
-# Check that you can connect from outside, beginning by the Proxmox host
-$ passwd -d root
+root@container:~# chmod 600 ~/.ssh/authorized_keys
+root@container:~# systemctl start sshd.service && systemctl enable sshd.service
+```
+* Check that you can connect from outside, beginning by the Proxmox host.
+  Then, remove the password for `root`:
+```bash
+root@container:~# passwd -d root
 ```
 
 * Check that the firewalls are not installed:
 ```bash
-$ systemctl status firewalld.service && systemctl stop firewalld.service && systemctl disable firewalld.service
-$ systemctl status iptables.service
+root@container:~# systemctl status firewalld.service && \
+ systemctl stop firewalld.service && systemctl disable firewalld.service
+root@container:~# systemctl status iptables.service
 ```
 
 * Set the `/etc/hosts` file:
 ```bash
-$ cat > /etc/hosts << _EOF
+root@container:~# cat > /etc/hosts << _EOF
 # Local VM
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
 ::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
@@ -607,14 +698,24 @@ $ cat > /etc/hosts << _EOF
 _EOF
 ```
 
-### Checks
-* On the host:
+### Basic checks for the configuration of the LXC containers
+* On the gateway:
 ```bash
-$ declare -a node_list=("lb" "lb1" "lb2" "etcd1" "etcd2" "controller" "controller1" "controller2" "worker1" "worker2")
-$ for node in "${node_list[@]}"; do ssh root@${node} "hostname; getenforce"; done
+root@gwkublxc:~# declare -a node_list=("lb" "lb1" "lb2" "etcd1" "etcd2" \
+ "controller" "controller1" "controller2" "worker1" "worker2")
+root@gwkublxc:~# for node in "${node_list[@]}"; do \
+ ssh root@${node} "hostname; getenforce"; done
+lb.example.com
+Disabled
+lb1.example.com
+Disabled
+lb2.example.com
+Disabled
 etcd1.example.com
 Disabled
 etcd2.example.com
+Disabled
+controller.example.com
 Disabled
 controller1.example.com
 Disabled
@@ -626,10 +727,10 @@ worker2.example.com
 Disabled
 ```
 
-### `etcd` setup
-* Setup and start `etcd` on all the etcd cluster nodes:
+# Set up of the configuration management (`etcd`) servers
+* On the gateway, create the setup file for the `etcd` nodes:
 ```bash
-$ mkdir -p /opt/etcd && cat > /opt/etcd/etcd.service << _EOF
+root@gwkublxc:~# mkdir -p /opt/etcd && cat > /opt/etcd/etcd.service << _EOF
 [Unit]
 Description=Etcd Server
 After=network.target
@@ -664,19 +765,29 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 _EOF
-$ declare -a nodeip_list=("10.240.0.11" "10.240.0.12")
-$ declare -a node_list=("etcd1" "etcd2")
-$ for node in "${node_list[@]}"; do ssh root@${node} "mkdir -p /etc/etcd/ && mv ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/"; done
-$ for node in "${node_list[@]}"; do ssh root@${node} "yum -y install etcd file"; done
-$ for node in "${node_list[@]}"; do rsync -av -p /opt/etcd/etcd.service root@${node}:/usr/lib/systemd/system/; done
-$ for nodeip in "${nodeip_list[@]}"; do ssh root@${nodeip} "sed -ie s/INTERNAL_IP/${nodeip}/g /usr/lib/systemd/system/etcd.service"; done
 ```
 
-* Check the setup:
+* Setup and start the `etcd` service on all the etcd nodes:
 ```bash
-$ ssh etcd1
-# systemctl status etcd --no-pager
-# netstat -antlp
+root@gwkublxc:~# declare -a nodeip_list=("10.240.0.11" "10.240.0.12")
+root@gwkublxc:~# declare -a node_list=("etcd1" "etcd2")
+root@gwkublxc:~# for node in "${node_list[@]}"; do \
+ ssh root@${node} "mkdir -p /etc/etcd/ && \
+ mv ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/"; done
+root@gwkublxc:~# for node in "${node_list[@]}"; do \
+ ssh root@${node} "yum -y install etcd"; done
+root@gwkublxc:~# for node in "${node_list[@]}"; do \
+ rsync -av -p /opt/etcd/etcd.service root@${node}:/usr/lib/systemd/system/; done
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ ssh root@${nodeip} "sed -ie s/INTERNAL_IP/${nodeip}/g /usr/lib/systemd/system/etcd.service"; done
+```
+
+## Check the setup
+* On `etcd1`:
+```bash
+root@gwkublxc:~# ssh etcd1
+root@etcd1:~# systemctl status etcd --no-pager
+root@etcd1:~# netstat -antlp
 Active Internet connections (servers and established)
 Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
 tcp        0      0 10.240.0.11:2379        0.0.0.0:*               LISTEN      4746/etcd           
@@ -689,16 +800,20 @@ tcp        0      0 10.240.0.11:39722       10.240.0.11:2379        ESTABLISHED 
 tcp        0      0 10.240.0.11:2379        10.240.0.11:39722       ESTABLISHED 4746/etcd           
 tcp        0      0 127.0.0.1:2379          127.0.0.1:40872         ESTABLISHED 4746/etcd           
 tcp6       0      0 :::22                   :::*                    LISTEN      266/sshd            
-# etcdctl --ca-file=/etc/etcd/ca.pem cluster-health
+root@etcd1:~# etcdctl --ca-file=/etc/etcd/ca.pem cluster-health
 member 8e9e05c52164694d is healthy: got healthy result from https://10.240.0.11:2379
 cluster is healthy
-# etcdctl cluster-health
+root@etcd1:~# etcdctl cluster-health
 failed to check the health of member 8e9e05c52164694d on https://10.240.0.11:2379: Get https://10.240.0.11:2379/health: x509: certificate signed by unknown authority
 member 8e9e05c52164694d is unreachable: [https://10.240.0.11:2379] are all unreachable
 cluster is unavailable
-# exit
-$ ssh etcd2
-# netstat -antlp
+root@etcd1:~# exit
+```
+
+* On `etcd2`:
+```bash
+root@gwkublxc:~# ssh etcd2
+root@etcd2:~# netstat -antlp
 Active Internet connections (servers and established)
 Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
 tcp        0      0 10.240.0.12:2379        0.0.0.0:*               LISTEN      1179/etcd           
@@ -711,39 +826,783 @@ tcp        0      0 10.240.0.12:22          10.240.0.103:58082      ESTABLISHED 
 tcp        0      0 10.240.0.12:2379        10.240.0.12:60890       ESTABLISHED 1179/etcd           
 tcp        0      0 10.240.0.12:60890       10.240.0.12:2379        ESTABLISHED 1179/etcd           
 tcp6       0      0 :::22                   :::*                    LISTEN      389/sshd            
-# etcdctl --ca-file=/etc/etcd/ca.pem cluster-health
+root@etcd2:~# etcdctl --ca-file=/etc/etcd/ca.pem cluster-health
 member 8e9e05c52164694d is healthy: got healthy result from https://10.240.0.12:2379
 cluster is healthy
-# etcdctl cluster-health
+root@etcd2:~# etcdctl cluster-health
 failed to check the health of member 8e9e05c52164694d on https://10.240.0.12:2379: Get https://10.240.0.12:2379/health: x509: certificate signed by unknown authority
 member 8e9e05c52164694d is unreachable: [https://10.240.0.12:2379] are all unreachable
 cluster is unavailable
+root@etcd2:~# exit
 ```
 
-### Kubernetes API, Controller and Scheduler Servers
+# Kubernetes API, controller and scheduler servers
+* Specify the node IP addresses and host names for the following sub-sections:
+```bash
+root@gwkublxc:~# declare -a nodeip_list=("10.240.0.20" "10.240.0.21" \
+ "10.240.0.22")
+root@gwkublxc:~# declare -a node_list=("controller" "controller1" "controller2")
+root@gwkublxc:~# declare -a node_ext_list=("lb" "lb1" "lb2" "etcd1" "etcd2" \
+ "controller" "controller1" "controller2" "worker1" "worker2")
+```
+
+## Installation of complementary packages
+```bash
+[root@gwkublxc ~]# for node in "${nodeip_ext_list[@]}"; do \
+ ssh root@${node} "yum -y update && yum -y install file less man-db htop screen jq golang"; done
+```
+
+## Kubernetes certificates
+```bash
+root@gwkublxc:~# for node in "${node_list[@]}"; do \
+ ssh root@${node} "mkdir -p /var/lib/kubernetes/ && \
+ mv ca.pem kubernetes-key.pem kubernetes.pem /var/lib/kubernetes/"; done
+```
+
+## Kubernetes binaries
 * On the LXC K8S gateway, download Kubernetes:
 ```bash
-$ K8S_VER=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
-$ echo $K8S_VER 
-v1.14.1
-$ declare -a kubbin_list=("kube-apiserver" "kube-controller-manager" "kube-scheduler" "kubectl")
-$ for kubbin in "${kubbin_list[@]}"; do curl -LO https://storage.googleapis.com/kubernetes-release/release/${K8S_VER}/bin/linux/amd64/${kubbin} && chmod +x ${kubbin} && mv ${kubbin} /usr/local/bin/; done
-$ mkdir -p /var/lib/kubernetes && cat > /var/lib/kubernetes/token.csv << _EOF
-cat token.csv 
+root@gwkublxc:~# K8S_VER=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+root@gwkublxc:~# echo $K8S_VER 
+v1.14.2
+root@gwkublxc:~# declare -a kubbin_list=("kube-apiserver" \
+ "kube-controller-manager" "kube-scheduler" "kubectl")
+root@gwkublxc:~# for kubbin in "${kubbin_list[@]}"; do \
+ curl -LO https://storage.googleapis.com/kubernetes-release/release/${K8S_VER}/bin/linux/amd64/${kubbin} && \
+ chmod +x ${kubbin} && mv ${kubbin} /usr/local/bin/; done
+```
+
+* Upload the Kubernetes binaries to all the nodes:
+```bash
+root@gwkublxc:~# for node in "${node_ext_list[@]}"; do \
+ rsync -av -p /usr/local/bin/kube* root@${node}:/usr/local/bin/; done
+```
+
+## Kubernetes authentication token
+* Create the token on the gateway:
+```bash
+root@gwkublxc:~# mkdir -p /var/lib/kubernetes && \
+ cat > /var/lib/kubernetes/token.csv << _EOF
 chAng3m3,admin,admin
 chAng3m3,scheduler,scheduler
 chAng3m3,kubelet,kubelet
 _EOF
 ```
 
-* Upload the Kubernetes binaries to all the nodes:
+* Upload the Kubernetes token to all the nodes:
 ```bash
-$ declare -a nodeip_list=("10.240.0.20" "10.240.0.21" "10.240.0.22")
-$ declare -a node_list=("controller" "controller1" "controller2")
-$ declare -a node_ext_list=("lb" "lb1" "lb2" "etcd1" "etcd2" "controller" "controller1" "controller2" "worker1" "worker2")
-$ for node in "${node_list[@]}"; do ssh root@${node} "yum -y install file less man-db htop"; done
-$ for node in "${node_list[@]}"; do ssh root@${node} "mkdir -p /var/lib/kubernetes/ && mv ca.pem kubernetes-key.pem kubernetes.pem /var/lib/kubernetes/"; done
-$ for node in "${node_ext_list[@]}"; do rsync -av -p /usr/local/bin/kube* root@${node}:/usr/local/bin/; done
-$ for node in "${node_ext_list[@]}"; do rsync -av -p /var/lib/kubernetes/token.csv root@${node}:/var/lib/kubernetes/; done
+root@gwkublxc:~# for node in "${node_ext_list[@]}"; do \
+ rsync -av -p /var/lib/kubernetes/token.csv root@${node}:/var/lib/kubernetes/; \
+ done
+```
+
+## Access Control Lists (ACL)
+* Create the JSON file for the Kubernetes authorization policy:
+```bash
+root@gwkublxc:~# cat > /var/lib/kubernetes/authorization-policy.jsonl << _EOF
+{"apiVersion": "abac.authorization.kubernetes.io/v1beta1", "kind": "Policy", "spec": {"user":"*", "nonResourcePath": "*", "readonly": true}}
+{"apiVersion": "abac.authorization.kubernetes.io/v1beta1", "kind": "Policy", "spec": {"user":"admin", "namespace": "*", "resource": "*", "apiGroup": "*"}}
+{"apiVersion": "abac.authorization.kubernetes.io/v1beta1", "kind": "Policy", "spec": {"user":"scheduler", "namespace": "*", "resource": "*", "apiGroup": "*"}}
+{"apiVersion": "abac.authorization.kubernetes.io/v1beta1", "kind": "Policy", "spec": {"user":"kubelet", "namespace": "*", "resource": "*", "apiGroup": "*"}}
+{"apiVersion": "abac.authorization.kubernetes.io/v1beta1", "kind": "Policy", "spec": {"group":"system:serviceaccounts", "namespace": "*", "resource": "*", "apiGroup": "*", "nonResourcePath": "*"}}
+_EOF
+```
+
+* Distribute the JSON policy file:
+```bash
+root@gwkublxc:~# for node in "${nodeip_ext_list[@]}"; do \
+ rsync -av /var/lib/kubernetes/authorization-policy.jsonl root@${node}:/var/lib/kubernetes/; done
+```
+
+## Kubernetes API service
+* Create the API service file:
+```bash
+root@gwkublxc:~# cat > /var/lib/kubernetes/kube-apiserver.service << _EOF
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-apiserver \
+  --admission-control=NamespaceLifecycle,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota \
+  --advertise-address=INTERNAL_IP \
+  --allow-privileged=true \
+  --apiserver-count=3 \
+  --authorization-mode=ABAC \
+  --authorization-policy-file=/var/lib/kubernetes/authorization-policy.jsonl \
+  --bind-address=0.0.0.0 \
+  --enable-swagger-ui=true \
+  --etcd-cafile=/var/lib/kubernetes/ca.pem \
+  --insecure-bind-address=0.0.0.0 \
+  --kubelet-certificate-authority=/var/lib/kubernetes/ca.pem \
+  --etcd-servers=https://10.240.0.11:2379,https://10.240.0.12:2379 \
+  --service-account-key-file=/var/lib/kubernetes/kubernetes-key.pem \
+  --service-cluster-ip-range=10.32.0.0/24 \
+  --service-node-port-range=30000-32767 \
+  --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \
+  --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \
+  --token-auth-file=/var/lib/kubernetes/token.csv \
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+_EOF
+```
+
+* Distribute the API service file:
+```bash
+root@gwkublxc:~# for nodeip in "${nodeip_ext_list[@]}"; do \
+ rsync -av /var/lib/kubernetes/kube-apiserver.service root@${nodeip}:/etc/systemd/system/; done
+root@gwkublxc:~# for nodeip in "${nodeip_ext_list[@]}"; do \
+ ssh root@${nodeip} "sed -ie s/INTERNAL_IP/${nodeip}/g /etc/systemd/system/kube-apiserver.service"; done
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ ssh root@${nodeip} "systemctl daemon-reload && \
+  systemctl enable kube-apiserver && \
+  systemctl start kube-apiserver && \
+  systemctl status kube-apiserver -l"; done
+```
+
+## Kubernetes controller manager
+* Create the service file:
+```bash
+root@gwkublxc:~# cat > /var/lib/kubernetes/kube-controller-manager.service << _EOF
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-controller-manager \
+  --allocate-node-cidrs=true \
+  --cluster-cidr=10.200.0.0/16 \
+  --cluster-name=kubernetes \
+  --leader-elect=true \
+  --master=http://INTERNAL_IP:8080 \
+  --root-ca-file=/var/lib/kubernetes/ca.pem \
+  --service-account-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \
+  --service-cluster-ip-range=10.32.0.0/24 \
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+_EOF
+```
+
+* Distribute the service file:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ rsync -av /var/lib/kubernetes/kube-controller-manager.service \
+  root@${node}:/etc/systemd/system/; done
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ ssh root@${nodeip} "sed -ie s/INTERNAL_IP/${nodeip}/g \
+  /etc/systemd/system/kube-controller-manager.service"; done
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ ssh root@${nodeip} "systemctl daemon-reload && \
+  systemctl enable kube-controller-manager && \
+  systemctl start kube-controller-manager && \
+  systemctl status kube-controller-manager -l"; done
+```
+
+## Kubernetes scheduler
+* Create the service file:
+```bash
+root@gwkublxc:~# cat > /var/lib/kubernetes/kube-scheduler.service << _EOF
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler \
+  --leader-elect=true \
+  --master=http://INTERNAL_IP:8080 \
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+_EOF
+```
+
+* Distribute the service file:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ rsync -av /var/lib/kubernetes/kube-scheduler.service \
+  root@${node}:/etc/systemd/system/; done
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ ssh root@${nodeip} "sed -ie s/INTERNAL_IP/${nodeip}/g \
+  /etc/systemd/system/kube-scheduler.service"; done
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ ssh root@${nodeip} "systemctl daemon-reload && \
+  systemctl enable kube-scheduler && \
+  systemctl start kube-scheduler && \
+  systemctl status kube-scheduler -l"; done
+```
+
+## Check the components
+```bash
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ echo "Node: ${nodeip}" && ssh root@${nodeip} "kubectl get componentstatuses"; \
+ done
+Node: 10.240.0.20
+NAME                 STATUS    MESSAGE             ERROR
+controller-manager   Healthy   ok                  
+scheduler            Healthy   ok                  
+etcd-0               Healthy   {"health":"true"}   
+etcd-1               Healthy   {"health":"true"}   
+Node: 10.240.0.21
+NAME                 STATUS    MESSAGE             ERROR
+controller-manager   Healthy   ok                  
+scheduler            Healthy   ok                  
+etcd-0               Healthy   {"health":"true"}   
+etcd-1               Healthy   {"health":"true"}   
+Node: 10.240.0.22
+NAME                 STATUS    MESSAGE             ERROR
+controller-manager   Healthy   ok                  
+scheduler            Healthy   ok                  
+etcd-0               Healthy   {"health":"true"}   
+etcd-1               Healthy   {"health":"true"}   
+```
+
+# Kubernetes worker nodes
+* The software and configuration files are downloaded and setup on the
+  Kubernetes gateway (`gwkublxc`), and then sent to the workers from there
+```bash
+root@gwkublxc:~# $ K8S_VER=$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+root@gwkublxc:~# echo $K8S_VER 
+v1.14.1
+root@gwkublxc:~# declare -a node_list=("worker1" "worker2")
+root@gwkublxc:~# declare -a nodeip_list=("10.240.0.31" "10.240.0.32")
+```
+
+## Installation of complementary packages
+* Install a few complementary packages:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "yum -y install file less man-db htop screen jq golang"; done
+```
+
+## Kubernetes certificates
+* If not already done:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "mkdir -p /var/lib/kubernetes && \
+  mv ca.pem kubernetes-key.pem kubernetes.pem /var/lib/kubernetes/"; done
+```
+
+## Kubernetes binaries
+* Download and install the Kubernetes binaries (which are slightly different
+  from the ones on the control plane: only `kubectl` is common):
+```bash
+root@gwkublxc:~# declare -a kubbin_list=("kube-proxy" "kubelet" "kubectl")
+root@gwkublxc:~# for kubbin in "${kubbin_list[@]}"; do \
+ curl -LO https://storage.googleapis.com/kubernetes-release/release/${K8S_VER}/bin/linux/amd64/${kubbin} && \
+ chmod +x ${kubbin} && mv ${kubbin} /usr/local/bin; done
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ rsync -av /usr/local/bin/kube{-proxy,let,ctl} root@${node}:/usr/local/bin/; done
+```
+
+## Docker
+* Install Docker CE (Community Edition) from the Docker CentOS repository:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo && \
+ yum -y install docker-ce"; done
+```
+
+* Start the Docker services:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "systemctl start docker.service && \
+  systemctl enable docker.service && systemctl status docker.service -l && \
+  docker version"; done
+```
+
+* Check that Docker works:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "docker run hello-world"; done
+```
+
+* Download and run the Docker container featuring the
+  [travel simulator](https://cloud.docker.com/u/tvlsim/repository/docker/tvlsim/metasim):
+```bash
+root@gwkublxc:~# ssh worker1
+root@worker1:~# docker run --rm -it tvlsim/metasim:centos
+[build@1..70 sim]$ workspace/install/airinv/bin/airinv
+The BOM should be built-in? no
+The BOM should be built from schedule? no
+Input inventory filename is: /home/build/dev/sim/workspace/install/stdair/share/stdair/samples/invdump01.csv
+Log filename is: airinv.log
+airinv SV5 / 2010-Mar-11> quit
+End of the session. Exiting.
+[build@125e6bb84570 sim]$ exit
+root@worker1:~# exit
+root@gwkublxc:~# ssh worker2
+root@worker2:~# docker run --rm -it tvlsim/metasim:centos
+[build@d02d6aba83c1 sim]$ workspace/install/airinv/bin/airinv
+airinv SV5 / 2010-Mar-11> quit
+End of the session. Exiting.
+[build@d0..3c1 sim]$ exit
+root@worker2:~# exit
+```
+
+## CNI network plugin
+* Look on https://github.com/containernetworking/plugins/releases for the
+  latest release (as of May 2019, it was `v0.8.0`).
+* Install the CNI plugin on the worker nodes:
+```bash
+root@gwkublxc:~# mkdir -p ~/bin && \
+ wget https://gist.githubusercontent.com/denisarnaud/1152fc54d017847d8cee02074a2b43df/raw/72f864c154ef3850a9f20fb9aaf0469f7b3ff464/getGitHubLatestRelease.sh \
+ -O ~/bin/getGitHubLatestRelease.sh && chmod +x ~/bin/getGitHubLatestRelease.sh
+root@gwkublxc:~# CNI_VER=$(~/bin/getGitHubLatestRelease.sh containernetworking/plugins|head -1)
+root@gwkublxc:~# mkdir -p /opt/network && \
+ wget https://github.com/containernetworking/plugins/releases/download/${CNI_VER}/cni-plugins-linux-amd64-${CNI_VER}.tgz \
+  -O /opt/network/cni-plugins-linux-amd64-${CNI_VER}.tgz
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "mkdir -p /opt/{network,cni/bin} && \
+  wget https://github.com/containernetworking/plugins/releases/download/${CNI_VER}/cni-plugins-linux-amd64-${CNI_VER}.tgz \
+   -O /opt/network/cni-plugins-linux-amd64-${CNI_VER}.tgz && \
+   tar xvf /opt/network/cni-plugins-linux-amd64-${CNI_VER}.tgz -C /opt/cni/bin"; done
+```
+
+## API server
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "systemctl daemon-reload && \
+  systemctl start kube-apiserver.service && \
+  systemctl enable kube-apiserver.service && \
+  systemctl status kube-apiserver.service -l"; done
+```
+
+## Kubelet configuration
+
+### Kubernetes configuration file (`KUBECONFIG`)
+* Create the Kubernetes configuration file (`KUBECONFIG`):
+```bash
+root@gwkublxc:~# mkdir -p /var/lib/kubelet && \
+ cat > /var/lib/kubelet/kubeconfig << _EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: /var/lib/kubernetes/ca.pem
+    server: https://10.240.0.21:6443
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    user: kubelet
+  name: kubelet
+current-context: kubelet
+users:
+- name: kubelet
+  user:
+    token: chAng3m3
+
+_EOF
+```
+
+* Distribute the Kubernetes configuration file to the nodes:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ rsync -av /var/lib/kubelet root@${node}:/var/lib/; done
+```
+
+### Kubelet service
+* Create the service file:
+```bash
+root@gwkublxc:~# cat > /etc/systemd/system/kubelet.service << _EOF
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+After=docker.service
+Requires=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \
+ --allow-privileged=true \
+ --cloud-provider= \
+ --cluster-dns=10.32.0.10 \
+ --cluster-domain=cluster.local \
+ --container-runtime=docker \
+ --docker=unix:///var/run/docker.sock \
+ --network-plugin=kubenet \
+ --kubeconfig=/var/lib/kubelet/kubeconfig \
+ --serialize-image-pulls=false \
+ --fail-swap-on=false \
+ --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \
+ --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \
+ --v=2
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+_EOF
+```
+
+* Distribute the service file to the nodes:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ rsync -av /etc/systemd/system/kubelet.service \
+  root@${node}:/etc/systemd/system/; done
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "systemctl daemon-reload && \
+  systemctl start kubelet.service && \
+  systemctl enable kubelet.service && \
+  systemctl status kubelet.service -l"; done
+```
+
+## `kube-proxy` configuration
+* Create the service file:
+```bash
+root@gwkublxc:~# cat > /etc/systemd/system/kube-proxy.service << _EOF
+[Unit]
+Description=Kubernetes Kube Proxy
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-proxy \
+  --master=https://10.240.0.21:6443 \
+  --kubeconfig=/var/lib/kubelet/kubeconfig \
+  --proxy-mode=iptables \
+  --v=2
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+_EOF
+```
+
+* Distribute the service file to the nodes:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ rsync -av /etc/systemd/system/kube-proxy.service \
+  root@${node}:/etc/systemd/system/; done
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "systemctl daemon-reload && \
+  systemctl start kube-proxy.service && \
+  systemctl enable kube-proxy.service && \
+  systemctl status kube-proxy.service -l"; done
+```
+
+## Check the Kubernetes services on the worker nodes
+* On the gateway:
+```bash
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "kubectl get componentstatuses"; done
+root@gwkublxc:~# for node in "${nodeip_list[@]}"; do \
+ ssh root@${node} "kubectl get nodes"; done
+```
+
+* On one of the controllers:
+```bash
+root@controller1:~# kubectl run --generator=run-pod/v1 --rm mytest \
+ --image=yauritux/busybox-curl -it
+/home # uname -a
+Linux mytest 4.15.18-14-pve #1 SMP PVE 4.15.18-38 (Tue, 30 Apr 2019 10:51:33 +0200) x86_64 GNU/Linux
+/home # exit
+root@controller1:~# kubectl get deployment
+NAME     READY   UP-TO-DATE   AVAILABLE   AGE
+mytest   1/1     1            1           3m32s
+root@controller1:~# kubectl get pods
+NAME                      READY   STATUS    RESTARTS   AGE
+mytest-589f6788ff-g4vsf   1/1     Running   0          2m26s
+root@controller1:~# kubectl delete deployment mytest
+deployment.extensions "mytest" deleted
+root@controller1:~# kubectl run --generator=run-pod/v1 --rm tvlsim \
+ --image=tvlsim/metasim:centos -it
+[root@tvlsim sim]# workspace/install/airinv/bin/airinv
+The BOM should be built-in? no
+The BOM should be built from schedule? no
+Input inventory filename is: /home/build/dev/sim/workspace/install/stdair/share/stdair/samples/invdump01.csv
+Log filename is: airinv.log
+airinv SV5 / 2010-Mar-11> quit
+End of the session. Exiting.
+[root@tvlsim sim]# exit
+exit
+Session ended, resume using 'kubectl attach tvlsim -c tvlsim -i -t' command when the pod is running
+pod "tvlsim" deleted
+root@controller1:~# kubectl delete deployment tvlsim
+root@controller1:~# kubectl run --generator=run-pod/v1 tvlsim \
+ --image=tvlsim/metasim:centos --replicas=2
+pod/tvlsim created
+root@controller1:~# kubectl run --generator=run-pod/v1 nginx --image=nginx \
+ --port=80 --replicas=2
+root@controller1:~# kubectl exec nginx -it -- bash
+root@controller1:~# kubectl run --generator=run-pod/v1 alpinenet \
+ --image=praqma/network-multitool --replicas=2
+root@controller1:~# kubectl exec alpinenet -it -- bash
+bash-4.4# ifconfig|grep inet|grep -v 127
+          inet addr:10.200.1.9  Bcast:10.200.1.255  Mask:255.255.255.0
+bash-4.4# ping 10.200.0.1
+bash-4.4# ping 10.200.1.1
+bash-4.4# exit
+```
+
+* On the Proxmox host, add the routes to the workers:
+```bash
+root@proxmox:~$ route add -net 10.200.0.0 netmask 255.255.255.0 gw 10.240.0.31
+root@proxmox:~$ route add -net 10.200.1.0 netmask 255.255.255.0 gw 10.240.0.32
+root@proxmox:~$ route -n
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+0.0.0.0         149.202.75.254  0.0.0.0         UG    0      0        0 vmbr0
+149.202.75.0    0.0.0.0         255.255.255.0   U     0      0        0 vmbr0
+10.30.1.0       0.0.0.0         255.255.255.0   U     0      0        0 vmbr1
+10.30.2.0       0.0.0.0         255.255.255.0   U     0      0        0 vmbr2
+10.240.0.0      0.0.0.0         255.255.255.0   U     0      0        0 vmbr3
+10.200.0.0      10.240.0.31     255.255.255.0   UG    0      0        0 vmbr3
+10.200.1.0      10.240.0.32     255.255.255.0   UG    0      0        0 vmbr3
+```
+
+* On a controller, test that the pod can ping the workers:
+```bash
+root@controller1:~# kubectl exec alpinenet -it -- bash
+bash-4.4# ping 10.200.0.1
+PING 10.200.0.1 (10.200.0.1) 56(84) bytes of data.
+64 bytes from 10.200.0.1: icmp_seq=1 ttl=62 time=0.068 ms
+64 bytes from 10.200.0.1: icmp_seq=3 ttl=62 time=0.060 ms
+^C
+--- 10.200.0.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2034ms
+rtt min/avg/max/mdev = 0.054/0.060/0.068/0.010 ms
+bash-4.4# ping 10.200.1.1
+PING 10.200.1.1 (10.200.1.1) 56(84) bytes of data.
+64 bytes from 10.200.1.1: icmp_seq=1 ttl=64 time=0.028 ms
+64 bytes from 10.200.1.1: icmp_seq=2 ttl=64 time=0.049 ms
+^C
+--- 10.200.1.1 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1012ms
+rtt min/avg/max/mdev = 0.028/0.038/0.049/0.012 ms
+bash-4.4# exit
+root@controller1:~# kubectl delete pod alpinenet
+```
+
+# Kube DNS
+* On a controller:
+```bash
+root@controller1:~# wget \
+ https://github.com/kelseyhightower/kubernetes-the-hard-way/raw/master/deployments/kube-dns.yaml \
+ -O /var/lib/kubernetes/kubedns.yaml
+root@controller1:~# kubectl create -f /var/lib/kubernetes/kubedns.yaml
+service/kube-dns created
+serviceaccount/kube-dns created
+configmap/kube-dns created
+deployment.apps/kube-dns created
+root@controller1:~# kubectl get svc --namespace=kube-system
+NAME       TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)         AGE
+kube-dns   ClusterIP   10.32.0.10   <none>        53/UDP,53/TCP   27s
+root@controller1:~# kubectl get pods --namespace=kube-system
+NAME                        READY   STATUS    RESTARTS   AGE
+kube-dns-6bfbdd666c-vcvgb   3/3     Running   0          82s
+root@controller1:~# kubectl create deployment alpinenet-deployment \
+ --image=praqma/network-multitool
+root@controller1:~# kubectl exec alpinenet-deployment-646478768-jrfs7 -it -- bash
+bash-4.4# cat /etc/resolv.conf 
+nameserver 10.32.0.10
+search default.svc.cluster.local svc.cluster.local cluster.local example.com
+options ndots:5
+bash-4.4# dig kubernetes.default.svc.cluster.local
+
+; <<>> DiG 9.12.3 <<>> kubernetes.default.svc.cluster.local
+;; global options: +cmd
+;; Got answer:
+;; WARNING: .local is reserved for Multicast DNS
+;; You are currently testing what happens when an mDNS query is leaked to DNS
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 20424
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;kubernetes.default.svc.cluster.local. IN A
+
+;; ANSWER SECTION:
+kubernetes.default.svc.cluster.local. 30 IN A	10.32.0.1
+bash-4.4# 
+```
+
+# Kubernetes client on the gateway
+* Setup the `KUBECONFIG` environment variable:
+```bash
+root@gwkublxc:~# cat >> ~/.bashrc << _EOF
+
+# Kubernetes
+export KUBECONFIG="/var/lib/kubelet/kubeconfig"
+
+_EOF
+root@gwkublxc:~# . ~/.bashrc
+```
+
+* Check that the gateway can interact with the Kubernetes cluster:
+```bash
+root@gwkublxc:~# kubectl get nodes
+NAME                                STATUS   ROLES    AGE     VERSION
+worker1.example.com   Ready    <none>   8h      v1.14.2
+worker2.example.com   Ready    <none>   7h39m   v1.14.2
+```
+
+# Smoke tests with replicas on Alpine network multi-tool
+* On a controller, create a deployment YAML file for the Alpine network
+  multi-tool containers:
+```bash
+root@controller1:~# cat > /var/lib/kubernetes/alpinenet-deployment.yaml << _EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpinenet-deployment
+  labels:
+    app: alpinenet
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alpinenet
+  template:
+    metadata:
+      labels:
+        app: alpinenet
+    spec:
+      containers:
+      - name: alpinenet
+        image: praqma/network-multitool
+
+_EOF
+```
+
+* Create the Kubernetes deployment:
+```bash
+root@controller1:~# kubectl create -f /var/lib/kubernetes/alpinenet-deployment.yaml
+deployment.apps/alpinenet-deployment created
+```
+
+* List the pods:
+```bash
+root@controller1:~# kubectl get pods -o go-template --template '{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}'
+alpinenet-deployment-84c8c587c-28vgv
+alpinenet-deployment-84c8c587c-crfl8
+```
+
+* List the IP addresses of the pods, and check that they can interact
+  one with the other:
+```bash
+root@controller1:~# declare -a pod_list=($(kubectl get pods -o go-template --template '{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}'))
+root@controller1:~# for pod in "${pod_list[@]}"; do kubectl exec ${pod} -it -- ifconfig; done | grep inet | grep -v 127
+          inet addr:10.200.0.10  Bcast:10.200.0.255  Mask:255.255.255.0
+          inet addr:10.200.1.11  Bcast:10.200.1.255  Mask:255.255.255.0
+root@controller1:~# kubectl exec alpinenet-deployment-84c8c587c-28vgv -it -- bash
+bash-4.4# ifconfig | grep inet | grep -v 127
+          inet addr:10.200.0.10  Bcast:10.200.0.255  Mask:255.255.255.0
+bash-4.4# ping 10.200.1.11
+PING 10.200.1.11 (10.200.1.11) 56(84) bytes of data.
+64 bytes from 10.200.1.11: icmp_seq=1 ttl=61 time=0.073 ms
+64 bytes from 10.200.1.11: icmp_seq=2 ttl=61 time=0.074 ms
+bash-4.4# exit
+root@controller1:~# 
+```
+
+# Smoke tests with replicas of Nginx
+* On a controller, create a deployment YAML file for the Nginx containers:
+```bash
+root@controller1:~# cat > /var/lib/kubernetes/nginx-deployment.yaml << _EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.7.9
+        ports:
+        - containerPort: 80
+
+_EOF
+```
+
+* Create the Kubernetes deployment:
+```bash
+root@controller1:~# kubectl create -f /var/lib/kubernetes/nginx-deployment.yaml
+deployment.apps/nginx-deployment created
+```
+
+* List the pods:
+```bash
+root@controller1:~# kubectl get pods -o go-template --template '{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}' | grep nginx
+nginx-deployment-6dd86d77d-5r4nv
+nginx-deployment-6dd86d77d-j4tgh
+nginx-deployment-6dd86d77d-n842m
+```
+
+* Create a `NodePort` service:
+```bash
+root@controller1:~# kubectl expose deployment nginx-deployment --type NodePort
+service/nginx-deployment exposed
+root@controller1:~# kubectl get svc
+NAME               TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)        AGE
+kubernetes         ClusterIP   10.32.0.1    <none>        443/TCP        6d1h
+nginx-deployment   NodePort    10.32.0.98   <none>        80:31233/TCP   3s
+```
+
+* Query Nginx through the workers (from either their IP or host name),
+  specifying the node port:
+```bash
+root@controller1:~# NODE_PORT=$(kubectl get svc nginx-deployment \
+ --output=jsonpath='{range .spec.ports[0]}{.nodePort}')
+root@controller1:~# curl http://10.240.0.31:31233
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+</html>
+root@controller1:~# curl http://worker2.example.com:31233
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+</html>
+```
+
+* Query Nginx through a POD, which does not require the knowledge of the port:
+```bash
+root@controller1:~# declare -a pod_list=($(kubectl get pods -o go-template \
+ --template '{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}' | grep nginx))
+root@controller1:~# for pod in "${pod_list[@]}"; do \
+ kubectl exec ${pod} -it -- ip addr show; done | grep inet | grep -v 127
+    inet 10.200.0.12/24 brd 10.200.0.255 scope global eth0
+    inet 10.200.0.13/24 brd 10.200.0.255 scope global eth0
+    inet 10.200.1.13/24 brd 10.200.1.255 scope global eth0
+root@controller1:~# curl http://10.200.0.12
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+</html>
+root@controller1:~# curl http://10.200.1.13
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+...
+</html>
 ```
 
