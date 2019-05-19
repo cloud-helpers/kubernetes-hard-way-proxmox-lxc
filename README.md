@@ -1,6 +1,61 @@
 Kubernetes The Hard Way - Proxmox LXC-based Cluster
 ===================================================
 
+- [Kubernetes The Hard Way - Proxmox LXC-based Cluster](#kubernetes-the-hard-way---proxmox-lxc-based-cluster)
+- [Overview](#overview)
+- [References](#references)
+- [Host preparation](#host-preparation)
+  * [Get the latest CentOS templates](#get-the-latest-centos-templates)
+  * [Overlay module](#overlay-module)
+- [Kubernetes cluster gateway](#kubernetes-cluster-gateway)
+  * [Complement the installation on the gateway](#complement-the-installation-on-the-gateway)
+- [CFSSL](#cfssl)
+  * [CFSSL software](#cfssl-software)
+  * [CA certificates](#ca-certificates)
+  * [Node certificates](#node-certificates)
+- [Creation and basic setup of the LXC containers](#creation-and-basic-setup-of-the-lxc-containers)
+  * [Configuration management servers](#configuration-management-servers)
+  * [Controller plane servers](#controller-plane-servers)
+  * [Worker nodes](#worker-nodes)
+  * [Load balancers (lb)](#load-balancers--lb-)
+  * [On the clients (eg, laptops)](#on-the-clients--eg--laptops-)
+  * [Propagation of certificates on the newly created LXC containers](#propagation-of-certificates-on-the-newly-created-lxc-containers)
+  * [Supplementary configuration of the LXC containers](#supplementary-configuration-of-the-lxc-containers)
+    + [General](#general)
+    + [SSH](#ssh)
+    + [Basic checks for the configuration of the LXC containers](#basic-checks-for-the-configuration-of-the-lxc-containers)
+- [Set up of the configuration management (`etcd`) servers](#set-up-of-the-configuration-management---etcd---servers)
+  * [Check the setup](#check-the-setup)
+- [Kubernetes API, controller and scheduler servers](#kubernetes-api--controller-and-scheduler-servers)
+  * [Installation of complementary packages](#installation-of-complementary-packages)
+  * [Kubernetes certificates](#kubernetes-certificates)
+  * [Kubernetes binaries](#kubernetes-binaries)
+  * [Kubernetes authentication token](#kubernetes-authentication-token)
+  * [Access Control Lists (ACL)](#access-control-lists--acl-)
+  * [Kubernetes API service](#kubernetes-api-service)
+  * [Kubernetes controller manager](#kubernetes-controller-manager)
+  * [Kubernetes scheduler](#kubernetes-scheduler)
+  * [Check the components](#check-the-components)
+- [Kubernetes worker nodes](#kubernetes-worker-nodes)
+  * [Installation of complementary packages](#installation-of-complementary-packages-1)
+  * [Kubernetes certificates](#kubernetes-certificates-1)
+  * [Kubernetes binaries](#kubernetes-binaries-1)
+  * [Docker](#docker)
+  * [CNI network plugin](#cni-network-plugin)
+  * [API server](#api-server)
+  * [Kubelet configuration](#kubelet-configuration)
+    + [Kubernetes configuration file (`KUBECONFIG`)](#kubernetes-configuration-file---kubeconfig--)
+    + [Kubelet service](#kubelet-service)
+  * [`kube-proxy` configuration](#-kube-proxy--configuration)
+  * [Check the Kubernetes services on the worker nodes](#check-the-kubernetes-services-on-the-worker-nodes)
+- [Kube DNS](#kube-dns)
+- [Kubernetes client on the gateway](#kubernetes-client-on-the-gateway)
+- [Smoke tests with replicas on Alpine network multi-tool](#smoke-tests-with-replicas-on-alpine-network-multi-tool)
+- [Smoke tests with replicas of Nginx](#smoke-tests-with-replicas-of-nginx)
+
+<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
+
+# Overview
 [This document](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/blob/master/README.md)
 aims at providing a full hands-on guide to set up a
 [Kubernetes (aka K8S)](https://kubernetes.io/) cluster on
@@ -60,13 +115,13 @@ For instance, through
 * [Kubernetes reference documentation](https://kubernetes.io/docs/reference/)
 * [Getting started guide on installing a multi-node Kubernetes cluster
   on Fedora with flannel](https://kubernetes.io/docs/getting-started-guides/fedora/flannel_multi_node_cluster/)
-
 * Kubernetes - Architecture, by
   [Khtan66 - Own work, CC BY-SA 4.0](https://commons.wikimedia.org/w/index.php?curid=53571935)
   ![Kubernetes - Architecture](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/blob/master/img/Kubernetes%20-%20Architecture.png "Kubernetes - Architecture")
 * Kubernetes - Pod Networkingby, by
   [Marvin The Paranoid - Own work, CC BY-SA 4.0](https://commons.wikimedia.org/w/index.php?curid=75140812)
   ![Kubernetes - Pod Networking](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/blob/master/img/Kubernetes%20-%20Pod%20Networking.png "Kubernetes - Pod Networking")
+* [Documentation, generate the table of content (TOC)](https://ecotrust-canada.github.io/markdown-toc/)
 
 # Host preparation
 In that section, it is assumed that we are logged on the Proxmox host
