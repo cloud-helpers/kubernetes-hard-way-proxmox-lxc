@@ -61,9 +61,9 @@ For instance, through
 * [Getting started guide on installing a multi-node Kubernetes cluster
   on Fedora with flannel](https://kubernetes.io/docs/getting-started-guides/fedora/flannel_multi_node_cluster/)
 
-* [![Kubernetes - Architecture](img/Kubernetes - Architecture.png)],
+* ![Kubernetes - Architecture](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/blob/master/img/Kubernetes%20-%20Architecture.png "Kubernetes - Architecture"),
 by [Khtan66 - Own work, CC BY-SA 4.0](https://commons.wikimedia.org/w/index.php?curid=53571935)
-* [![Kubernetes - Pod Networking](img/Kubernetes - Pod Networking.png)],
+* ![Kubernetes - Pod Networking](https://github.com/cloud-helpers/kubernetes-hard-way-proxmox-lxc/blob/master/img/Kubernetes%20-%20Pod%20Networking.png "Kubernetes - Pod Networking"),
 by [Marvin The Paranoid - Own work, CC BY-SA 4.0](https://commons.wikimedia.org/w/index.php?curid=75140812)
 
 # Host preparation
