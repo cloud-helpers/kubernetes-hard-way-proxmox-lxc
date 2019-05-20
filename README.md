@@ -1,7 +1,7 @@
 Kubernetes The Hard Way - Proxmox LXC-based Cluster
 ===================================================
 
-![Creative container assembly](https://pixabay.com/get/52e2d5404c55ab14f6d1867dda6d367c103cdde755556c48702a73d69e4cc05eb1/container-4203677_1920.jpg)
+![Creative container assembly](https://pixabay.com/images/id-4203677/)
 
 - [Kubernetes The Hard Way - Proxmox LXC-based Cluster](#kubernetes-the-hard-way---proxmox-lxc-based-cluster)
 - [Overview](#overview)
