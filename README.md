@@ -37,6 +37,9 @@ Kubernetes The Hard Way - Proxmox LXC-based Cluster
   * [Kubernetes API service](#kubernetes-api-service)
   * [Kubernetes controller manager](#kubernetes-controller-manager)
   * [Kubernetes scheduler](#kubernetes-scheduler)
+  * [Restarting the services on the control plane](#restarting-the-services-on-the-control-plane)
+  * [Helper tools (`kubectx` / `kubens`)](#helper-tools---kubectx-----kubens--)
+  
   * [Check the components](#check-the-components)
 - [Kubernetes worker nodes](#kubernetes-worker-nodes)
   * [Installation of complementary packages](#installation-of-complementary-packages-1)
@@ -54,6 +57,9 @@ Kubernetes The Hard Way - Proxmox LXC-based Cluster
 - [Kubernetes client on the gateway](#kubernetes-client-on-the-gateway)
 - [Smoke tests with replicas on Alpine network multi-tool](#smoke-tests-with-replicas-on-alpine-network-multi-tool)
 - [Smoke tests with replicas of Nginx](#smoke-tests-with-replicas-of-nginx)
+- [Smoke tests with the travel simulator](#smoke-tests-with-the-travel-simulator)
+  * [Create a single simulator pod](#create-a-single-simulator-pod)
+  * [Create a full deployment of several simulator pods](#create-a-full-deployment-of-several-simulator-pods)
 
 <small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
 
@@ -934,7 +940,7 @@ root@gwkublxc:~# for kubbin in "${kubbin_list[@]}"; do \
 * Upload the Kubernetes binaries to all the nodes:
 ```bash
 root@gwkublxc:~# for node in "${node_ext_list[@]}"; do \
- rsync -av -p /usr/local/bin/kube* root@${node}:/usr/local/bin/; done
+ rsync -av /usr/local/bin/kube* root@${node}:/usr/local/bin/; done
 ```
 
 ## Kubernetes authentication token
@@ -951,7 +957,7 @@ _EOF
 * Upload the Kubernetes token to all the nodes:
 ```bash
 root@gwkublxc:~# for node in "${node_ext_list[@]}"; do \
- rsync -av -p /var/lib/kubernetes/token.csv root@${node}:/var/lib/kubernetes/; \
+ rsync -av /var/lib/kubernetes/token.csv root@${node}:/var/lib/kubernetes/; \
  done
 ```
 
@@ -1099,6 +1105,46 @@ root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
   systemctl enable kube-scheduler && \
   systemctl start kube-scheduler && \
   systemctl status kube-scheduler -l"; done
+```
+
+## Restarting the services on the control plane
+```bash
+root@gwkublxc:~# declare -a kubsvc_list=("kube-apiserver" \
+ "kube-controller-manager" "kube-scheduler")
+root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
+ for kubsvc in "${kubsvc_list[@]}"; do \
+  ssh root@${nodeip} "systemctl restart ${kubsvc} && \
+   systemctl status ${kubsvc} -l"; done; done
+```
+
+## Helper tools (`kubectx` / `kubens`)
+* Kubernetes context helper (`kubectx`):
+```bash
+root@gwkublxc:~# git clone https://github.com/ahmetb/kubectx ${HOME}/.kubectx
+root@gwkublxc:~# COMPDIR=$(pkg-config --variable=completionsdir bash-completion)
+root@gwkublxc:~# ln -sf ${HOME}/.kubectx/completion/kubens.bash ${COMPDIR}/kubens
+root@gwkublxc:~# ln -sf ${HOME}/.kubectx/completion/kubectx.bash ${COMPDIR}/kubectx
+root@gwkublxc:~# cat >> ~/.bashrc << _EOF
+
+# Kubernetes helper tools
+export PATH="\${HOME}/.kubectx:\${PATH}"
+
+_EOF
+root@gwkublxc:~# . ~/.bashrc
+```
+
+* Kubernetes namespace helper (`kubens`):
+```bash
+root@gwkublxc:~# git clone https://github.com/jonmosco/kube-ps1.git ${HOME}/.kube-ps1
+root@gwkublxc:~# cat >> ~/.bashrc << _EOF
+
+# Kubernetes prompt
+source ~/.kube-ps1/kube-ps1.sh
+PS1='[\u@\h \W \$(kube_ps1)]\\$ '
+source <(kubectl completion bash)
+
+_EOF
+root@gwkublxc:~# . ~/.bashrc
 ```
 
 ## Check the components
@@ -1663,5 +1709,138 @@ root@controller1:~# curl http://10.200.1.13
 <title>Welcome to nginx!</title>
 ...
 </html>
+```
+
+# Smoke tests with the travel simulator
+
+## Create a single simulator pod
+* On one of the controllers, create a pod configuration file:
+```bash
+root@controller1:~# cat > /var/lib/kubernetes/tvlsim-pod.yaml << _EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tvlsim
+  labels:
+    purpose: bootstrap-sim
+spec:
+  containers:
+  - name: tvlsim-container
+    image: tvlsim/metasim:centos
+    command: ["/home/build/dev/sim/workspace/install/airinv/bin/AirInvServer"]
+  restartPolicy: OnFailure
+
+_EOF
+```
+
+* Launch the simulator pod:
+```bash
+root@controller1:~# kubectl create -f /var/lib/kubernetes/tvlsim-pod.yaml
+pod/tvlsim created
+root@controller1:~# kubectl get pods
+NAME        READY   STATUS    RESTARTS   AGE
+tvlsim      1/1     Running   0          32s
+```
+
+* Attach to a simulator pod:
+```bash
+root@controller1:~# kubectl exec tvlsim -it -- bash
+[root@tvlsim sim]# ps -edf
+UID        PID  PPID  C STIME TTY          TIME CMD
+root         1     0  0 21:54 ?        00:00:00 /home/build/dev/sim/workspace/install/airinv/bin/AirInvServer
+root         9     0  0 21:56 pts/0    00:00:00 bash
+root       136     9  0 21:56 pts/0    00:00:00 ps -edf
+[root@tvlsim sim]# workspace/install/airinv/bin/AirInvClient 
+Connecting to hello world server…
+Sending Hello 0…
+Received World 0
+...
+Sending Hello 9…
+Received World 9
+[root@tvlsim sim]# exit
+root@controller1:~# kubectl exec tvlsim -it -- workspace/install/airinv/bin/AirInvClient
+Connecting to hello world server…
+Sending Hello 0…
+Received World 0
+...
+Sending Hello 9…
+Received World 9
+root@controller1:~# kubectl exec tvlsim -it -- workspace/install/airinv/bin/airinv
+The BOM should be built-in? no
+The BOM should be built from schedule? no
+Input inventory filename is: /home/build/dev/sim/workspace/install/stdair/share/stdair/samples/invdump01.csv
+Log filename is: airinv.log
+airinv SV5 / 2010-Mar-11> list
+List of flights for all 0 (all)
+1. SV
+  1.1. SV5
+    1.1.1. SV5 / 2010-Mar-11
+    1.1.2. SV5 / 2010-May-11
+
+airinv SV5 / 2010-Mar-11> quit
+End of the session. Exiting.
+```
+
+* Delete the simulator pod:
+```bash
+root@controller1:~# kubectl delete -f /var/lib/kubernetes/tvlsim-pod.yaml
+pod "tvlsim" deleted
+```
+
+## Create a full deployment of several simulator pods
+* On one of the controllers, create a deployment configuration file:
+```bash
+root@controller1:~# cat > /var/lib/kubernetes/tvlsim-deployment.yaml << _EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tvlsim-deployment
+  labels:
+    app: tvlsim
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tvlsim
+  template:
+    metadata:
+      labels:
+        app: tvlsim
+    spec:
+      containers:
+      - name: tvlsim
+        image: tvlsim/metasim:centos
+        command: ["/home/build/dev/sim/workspace/install/airinv/bin/AirInvServer"]
+        ports:
+        - containerPort: 5555
+
+_EOF
+```
+
+* Launch the simulator deployment:
+```bash
+root@controller1:~# kubectl create -f /var/lib/kubernetes/tvlsim-deployment.yaml
+deployment.apps/tvlsim-deployment created
+root@controller1:~# kubectl get pods
+NAME        READY   STATUS    RESTARTS   AGE
+tvlsim-deployment-5f78c6c86b-qjrhk   1/1     Running   0          16s
+tvlsim-deployment-5f78c6c86b-vfl5f   1/1     Running   0          16s
+```
+
+* Attach to a simulator pod:
+```bash
+root@controller1:~# kubectl exec tvlsim-deployment-5f78c6c86b-qjrhk -it -- workspace/install/airinv/bin/AirInvClient
+Connecting to hello world server…
+Sending Hello 0…
+Received World 0
+...
+Sending Hello 9…
+Received World 9
+```
+
+* Delete the simulator pod:
+```bash
+root@controller1:~# kubectl delete -f /var/lib/kubernetes/tvlsim-deployment.yaml
+deployment.apps "tvlsim-deployment" deleted
 ```
 
