@@ -285,7 +285,7 @@ root@gwkublxc:~#
 ```bash
 root@gwkublxc:~# yum -y update
 root@gwkublxc:~# yum -y install openssh-server man-db file rsync openssl \
- wget curl less htop yum-utils net-tools
+ wget curl less htop yum-utils net-tools etcd
 root@gwkublxc:~# sed -ie 's/#Port 22/Port 7022/g' /etc/ssh/sshd_config
 root@gwkublxc:~# systemctl restart sshd && systemctl enable sshd
 ```
@@ -562,13 +562,13 @@ root@gwkublxc:~# exit
 root@proxmox:~$
 ```
 
-## Configuration management servers
+## Configuration management (`etcd`) servers
 * `etcd1`:
 ```bash
 root@proxmox:~$ pct create 211 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname etcd1.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.11/24,type=veth --onboot 1 --ostype centos
 root@proxmox:~$ pct resize 211 rootfs 10G
 root@proxmox:~$ pce enter 211
-root@etcd1:~# yum -y install net-tools openssh-server
+root@etcd1:~# yum -y install net-tools openssh-server wget file less htop git
 root@etcd1:~# systemctl start sshd && systemctl enable sshd
 root@etcd1:~# exit
 ```
@@ -578,7 +578,7 @@ root@etcd1:~# exit
 root@proxmox:~$ pct create 212 local:vztmpl/centos-7-default_20190510_amd64.tar.xz --arch amd64 --cores 1 --hostname etcd2.example.com --memory 1024 --swap 2048 --net0 name=eth0,bridge=vmbr3,gw=10.240.0.2,ip=10.240.0.12/24,type=veth --onboot 1 --ostype centos
 root@proxmox:~$ pct resize 212 rootfs 10G
 root@proxmox:~$ pce enter 212
-root@etcd2:~# yum -y install net-tools openssh-server
+root@etcd2:~# yum -y install net-tools openssh-server wget file less htop git
 root@etcd2:~# systemctl start sshd && systemctl enable sshd
 root@etcd2:~# exit
 ```
@@ -793,7 +793,18 @@ Disabled
 ```
 
 # Set up of the configuration management (`etcd`) servers
-* On the gateway, create the setup file for the `etcd` nodes:
+* References:
+ + https://github.com/etcd-io/etcd/blob/master/Documentation/demo.md
+ + https://github.com/etcd-io/etcd/blob/master/Documentation/op-guide/security.md
+
+* Define the `etcd` nodes:
+```bash
+root@gwkublxc:~# declare -a node_list=("etcd1" "etcd2")
+root@gwkublxc:~# declare -a nodeip_list=("10.240.0.11" "10.240.0.12")
+```
+
+* Write an `etcd` service script on the gateway, with place holders
+  for the variables (depending on actual nodes):
 ```bash
 root@gwkublxc:~# mkdir -p /opt/etcd && cat > /opt/etcd/etcd.service << _EOF
 [Unit]
@@ -809,7 +820,7 @@ EnvironmentFile=-/etc/etcd/etcd.conf
 User=etcd
 # set GOMAXPROCS to number of processors
 ExecStart=/bin/bash -c "GOMAXPROCS=\$(nproc) /usr/bin/etcd \
-  --name=\"\${ETCD_NAME}\" \
+  --name \"ETCD_NAME\" \
   --data-dir=\"\${ETCD_DATA_DIR}\" \
   --cert-file=\"/etc/etcd/kubernetes.pem\" \
   --key-file=\"/etc/etcd/kubernetes-key.pem\" \
@@ -817,13 +828,13 @@ ExecStart=/bin/bash -c "GOMAXPROCS=\$(nproc) /usr/bin/etcd \
   --peer-key-file=\"/etc/etcd/kubernetes-key.pem\" \
   --trusted-ca-file=\"/etc/etcd/ca.pem\" \
   --peer-trusted-ca-file=\"/etc/etcd/ca.pem\" \
-  --initial-advertise-peer-urls=\"https://INTERNAL_IP:2380\" \
-  --listen-peer-urls=\"https://INTERNAL_IP:2380\" \
-  --listen-client-urls=\"https://INTERNAL_IP:2379,http://127.0.0.1:2379\" \
-  --advertise-client-urls=\"https://INTERNAL_IP:2379\" \
-  --initial-cluster-token=\"etcd-cluster-0\" \
-  --initial-cluster=\"etcd1=https://10.240.0.11:2380,etcd2=https://10.240.0.12:2380\" \
-  --initial-cluster-state=\"new\""
+  --initial-advertise-peer-urls \"https://INTERNAL_IP:2380\" \
+  --listen-peer-urls \"https://INTERNAL_IP:2380\" \
+  --advertise-client-urls \"https://INTERNAL_IP:2379\" \
+  --listen-client-urls \"https://INTERNAL_IP:2379,http://127.0.0.1:2379\" \
+  --initial-cluster-token \"etcd-cluster-0\" \
+  --initial-cluster \"etcd1=https://10.240.0.11:2380,etcd2=https://10.240.0.12:2380\" \
+  --initial-cluster-state \"new\""
 Restart=on-failure
 LimitNOFILE=65536
 
@@ -832,19 +843,65 @@ WantedBy=multi-user.target
 _EOF
 ```
 
-* Setup and start the `etcd` service on all the etcd nodes:
+* Deploy and intanciate the `etcd` service scripts:
 ```bash
-root@gwkublxc:~# declare -a nodeip_list=("10.240.0.11" "10.240.0.12")
-root@gwkublxc:~# declare -a node_list=("etcd1" "etcd2")
-root@gwkublxc:~# for node in "${node_list[@]}"; do \
- ssh root@${node} "mkdir -p /etc/etcd/ && \
- mv ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/"; done
-root@gwkublxc:~# for node in "${node_list[@]}"; do \
- ssh root@${node} "yum -y install etcd"; done
-root@gwkublxc:~# for node in "${node_list[@]}"; do \
- rsync -av -p /opt/etcd/etcd.service root@${node}:/usr/lib/systemd/system/; done
-root@gwkublxc:~# for nodeip in "${nodeip_list[@]}"; do \
- ssh root@${nodeip} "sed -ie s/INTERNAL_IP/${nodeip}/g /usr/lib/systemd/system/etcd.service"; done
+[root@gwkublxc ~]# for node in "${node_list[@]}"; do ssh root@${node} "mkdir -p /etc/etcd/ && mv ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/"; done
+[root@gwkublxc ~]# for node in "${node_list[@]}"; do ssh root@${node} "yum -y install etcd"; done
+[root@gwkublxc ~]# for node in "${node_list[@]}"; do rsync -av -p /opt/etcd/etcd.service root@${node}:/usr/lib/systemd/system/; done
+[root@gwkublxc ~]# for i in "${!node_list[@]}"; do ssh root@${nodeip_list[$i]} "sed -i -e s/INTERNAL_IP/nodeip_list[$i]/g -e s/ETCD_NAME/node_list[$i]/g /usr/lib/systemd/system/etcd.service"; done
+[root@gwkublxc ~]# for nodeip in "${nodeip_list[@]}"; do ssh root@${nodeip} "systemctl daemon-reload && systemctl enable etcd && systemctl start etcd && systemctl status etcd -l"; done
+```
+
+* Check the setup from the gateway:
+```bash
+root@gwkublxc:~# ENDPOINTS="https://10.240.0.11:2379,https://10.240.0.12:2379"
+root@gwkublxc:~# etcdctl --ca-file=/etc/etcd/ca.pem --endpoints=$ENDPOINTS cluster-health
+member 3a57933972cb5131 is healthy: got healthy result from https://10.240.0.12:2379
+member ffed16798470cab5 is healthy: got healthy result from https://10.240.0.11:2379
+cluster is healthy
+root@gwkublxc:~# etcdctl --ca-file=/etc/etcd/ca.pem --endpoints=$ENDPOINTS member list
+3a57933972cb5131: name=etcd2 peerURLs=https://10.240.0.12:2380 clientURLs=https://10.240.0.12:2379 isLeader=true
+ffed16798470cab5: name=etcd1 peerURLs=https://10.240.0.11:2380 clientURLs=https://10.240.0.11:2379 isLeader=false
+```
+
+* Check setting and getting values from the gateway:
+```bash
+root@gwkublxc:~# cp /var/lib/kubernetes/*.pem /etc/etcd/
+root@gwkublxc:~# curl --cacert /etc/etcd/ca.pem --cert /etc/etcd/kubernetes.pem --key /etc/etcd/kubernetes-key.pem -L https://10.240.0.11:2379/v2/keys/foo -XPUT -d value=bar -v
+* About to connect() to 10.240.0.11 port 2379 (#0)
+*   Trying 10.240.0.11...
+* Connected to 10.240.0.11 (10.240.0.11) port 2379 (#0)
+* Initializing NSS with certpath: sql:/etc/pki/nssdb
+*   CAfile: /etc/etcd/ca.pem
+  CApath: none
+* SSL connection using TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+* Server certificate:
+* 	subject: CN=*.example.com,OU=Cluster,O=Kubernetes,L=Oslo,ST=Oslo,C=NO
+* 	start date: May 11 13:43:00 2019 GMT
+* 	expire date: May 10 13:43:00 2020 GMT
+* 	common name: *.example.com
+* 	issuer: CN=Kubernetes,OU=CA,O=Kubernetes,L=Oslo,ST=Oslo,C=NO
+> PUT /v2/keys/foo HTTP/1.1
+> User-Agent: curl/7.29.0
+> Host: 10.240.0.11:2379
+> Accept: */*
+> Content-Length: 9
+> Content-Type: application/x-www-form-urlencoded
+> 
+* upload completely sent off: 9 out of 9 bytes
+< HTTP/1.1 201 Created
+< Content-Type: application/json
+< X-Etcd-Cluster-Id: cdeaba18114f0e16
+< X-Etcd-Index: 14
+< X-Raft-Index: 20816
+< X-Raft-Term: 22
+< Date: Thu, 23 May 2019 18:17:23 GMT
+< Content-Length: 90
+< 
+{"action":"set","node":{"key":"/foo","value":"bar","modifiedIndex":14,"createdIndex":14}}
+* Connection #0 to host 10.240.0.11 left intact
+root@gwkublxc:~# curl --cacert /etc/etcd/ca.pem --cert /etc/etcd/kubernetes.pem --key /etc/etcd/kubernetes-key.pem https://10.240.0.11:2379/v2/keys/foo
+{"action":"get","node":{"key":"/foo","value":"bar","modifiedIndex":14,"createdIndex":14}}
 ```
 
 ## Check the setup
@@ -917,11 +974,41 @@ root@gwkublxc:~# declare -a node_ext_list=("lb" "lb1" "lb2" "etcd1" "etcd2" \
  ssh root@${node} "yum -y update && yum -y install file less man-db htop screen jq golang"; done
 ```
 
-## Kubernetes certificates
+## Go
+At least for [CoreDNS](https://github.com/coredns/coredns),
+version 1.12 of Go is required, whereas most of the distributions have older
+versions of Go, for instance 1.11.
+
+* Versions:
 ```bash
-root@gwkublxc:~# for node in "${node_list[@]}"; do \
- ssh root@${node} "mkdir -p /var/lib/kubernetes/ && \
- mv ca.pem kubernetes-key.pem kubernetes.pem /var/lib/kubernetes/"; done
+VERSION="1.12.5"
+OS="linux"
+ARCH="amd64"
+GOPKG="go${VERSION}.${OS}-${ARCH}.tar.gz"
+```
+
+* Download and install the Go binary package on the gateway:
+```bash
+root@gwkublxc:~# mkdir -p /opt/go/tarballs
+root@gwkublxc:~# wget https://dl.google.com/go/${GOPKG} -O /opt/go/tarballs/${GOPKG}
+root@gwkublxc:~# tar -C /usr/local -zxf /opt/go/tarballs/${GOPKG} && mv /usr/local/go /usr/local/go${VERSION} && ln -sf /usr/local/go${VERSION} /usr/local/go && mkdir ${HOME}/go
+```
+
+* Install Go on the controller nodes:
+```bash
+root@gwkublxc:~# declare -a node_ctrl_list=("controller1" "controller2")
+root@gwkublxc:~# for node in "${node_ctrl_list[@]}"; do rsync -av /opt/go root@${node}:/opt/; done
+root@gwkublxc:~# for node in "${node_ctrl_list[@]}"; do ssh root@${node} "tar -C /usr/local -zxf /opt/go/tarballs/${GOPKG} && mv /usr/local/go /usr/local/go${VERSION} && ln -sf /usr/local/go${VERSION} /usr/local/go && mkdir ${HOME}/go"; done
+```
+
+* On every controller node, the `~/.bashrc` file has to be updated, like:
+```bash
+root@controller1:~# cat >> ~/.bashrc << _EOF
+
+# Go
+export PATH="\${PATH}:/usr/local/go/bin"
+_EOF
+root@controller1:~# . ~/.bashrc
 ```
 
 ## Kubernetes binaries
@@ -941,6 +1028,13 @@ root@gwkublxc:~# for kubbin in "${kubbin_list[@]}"; do \
 ```bash
 root@gwkublxc:~# for node in "${node_ext_list[@]}"; do \
  rsync -av /usr/local/bin/kube* root@${node}:/usr/local/bin/; done
+```
+
+## Kubernetes certificates
+```bash
+root@gwkublxc:~# for node in "${node_list[@]}"; do \
+ ssh root@${node} "mkdir -p /var/lib/kubernetes/ && \
+ mv ca.pem kubernetes-key.pem kubernetes.pem /var/lib/kubernetes/"; done
 ```
 
 ## Kubernetes authentication token
@@ -1489,6 +1583,70 @@ PING 10.200.1.1 (10.200.1.1) 56(84) bytes of data.
 rtt min/avg/max/mdev = 0.028/0.038/0.049/0.012 ms
 bash-4.4# exit
 root@controller1:~# kubectl delete pod alpinenet
+```
+
+## CoreDNS
+* On a controller, download the configuration file of CoreDNS and deploy
+  the service:
+```bash
+root@controller1:~# wget https://storage.googleapis.com/kubernetes-the-hard-way/coredns.yaml -O /var/lib/kubernetes/coredns.yaml -O /var/lib/kubernetes/coredns.yaml
+root@controller1:~# kubectl apply -f /var/lib/kubernetes/coredns.yaml
+serviceaccount/coredns created
+clusterrole.rbac.authorization.k8s.io/system:coredns created
+clusterrolebinding.rbac.authorization.k8s.io/system:coredns created
+configmap/coredns created
+deployment.extensions/coredns created
+service/kube-dns created
+```
+
+* Check that the service is running:
+```bash
+root@controller1:~# kubectl get pods -l k8s-app=kube-dns -n kube-system
+NAME                       READY   STATUS    RESTARTS   AGE
+coredns-699f8ddd77-94qv9   1/1     Running   0          20s
+coredns-699f8ddd77-gtcgb   1/1     Running   0          20s
+```
+
+### Smoke test with busybox
+Create a busybox deployment:
+```bash
+root@controller1:~# kubectl run busybox --generator=run-pod/v1 --image=busybox:1.28 --command -- sleep 3600
+pod/busybox created
+```
+
+* List the pod created by the busybox deployment:
+```bash
+root@controller1:~# kubectl get pods -l run=busybox
+NAME                      READY   STATUS    RESTARTS   AGE
+busybox-bd8fb7cbd-vflm9   1/1     Running   0          10s
+```
+
+* Retrieve the full name of the busybox pod:
+```bash
+root@controller1:~# POD_NAME=$(kubectl get pods -l run=busybox -o jsonpath="{.items[0].metadata.name}")
+```
+
+* Execute a DNS lookup for the kubernetes service inside the busybox pod:
+```bash
+root@controller1:~# kubectl exec -ti $POD_NAME -- nslookup kubernetes
+Server:    10.32.0.10
+Address 1: 10.32.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      kubernetes
+Address 1: 10.32.0.1 kubernetes.default.svc.cluster.local
+```
+
+### CoreDNS from the sources (optional)
+* References:
+  + https://github.com/coredns/coredns
+  + https://github.com/coredns/deployment/tree/master/kubernetes
+
+* Install CoreDNS from sources on a controller. The C++ compiler is needed:
+```bash
+root@controller1:~# yum -y install gcc-c++ cmake3 zlib-devel bzip2-devel \
+ libffi-devel readline-devel doxygen protobuf-devel protobuf-compiler
+root@controller1:~# mkdir -p ~/dev/infra && git clone https://github.com/coredns/coredns ~/dev/infra/coredns
+root@controller1:~# cd ~/dev/infra/coredns && make
 ```
 
 # Kube DNS
